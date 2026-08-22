@@ -1,0 +1,12 @@
+[functions]
+  directory = "netlify/functions"
+
+[[redirects]]
+  from = "/api/aircraft"
+  to = "/.netlify/functions/aircraft"
+  status = 200
+
+[[redirects]]
+  from = "/api/route"
+  to = "/.netlify/functions/route"
+  status = 200

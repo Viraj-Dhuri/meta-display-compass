@@ -344,7 +344,7 @@
           <strong id="pitchText">-- deg</strong>
         </div>
         <div class="metric">
-          <span>FOV</span>
+          <span>Cone</span>
           <strong id="fovText">10 x 10</strong>
         </div>
       </div>
@@ -374,7 +374,7 @@
     <footer class="footer">
       <div class="help">
         <span><strong>Enter</strong> start / scan / capture</span>
-        <span><strong>Right</strong> calibrate, <strong>Left</strong> provider, <strong>Up</strong> reset</span>
+        <span><strong>Right</strong> calibrate, <strong>Left</strong> feed, <strong>Up</strong> reset</span>
         <span><strong>Down</strong> refresh aircraft</span>
       </div>
       <div class="keycap" aria-hidden="true">D-PAD</div>
@@ -382,13 +382,16 @@
   </main>
 
   <script>
-    const FOV_DEFAULT = { h: 10, v: 10 };
+    const FOV_DEFAULT = { h: 45, v: 30 };
     const FOV_MIN = 5;
-    const FOV_MAX = 30;
-    const FOV_LEGACY_MAX = 35;
+    const FOV_MAX = 60;
+    const FOV_LEGACY_MAX = 180;
     const SMOOTH_A = 0.55;
     const SMOOTH_FULL_DEG = 3;
     const SEARCH_RADIUS_NM = 80;
+    const MAX_VISIBLE_NM = 6;
+    const ROUTE_CACHE_OK_MS = 5 * 60 * 1000;
+    const ROUTE_CACHE_FAIL_MS = 90 * 1000;
     const STALE_AIRCRAFT_MS = 20000;
     const D2R = Math.PI / 180;
     const R2D = 180 / Math.PI;
@@ -409,8 +412,8 @@
 
     const providers = [
       { id: "adsblol", label: "ADSB.lol" },
-      { id: "adsbfi", label: "adsb.fi" },
-      { id: "fr24", label: "Flightradar24" }
+      { id: "airplanes", label: "airplanes.live" },
+      { id: "adsbfi", label: "adsb.fi" }
     ];
 
     let providerIndex = 0;
@@ -429,6 +432,8 @@
     let calWork = {};
     let fov = { h: FOV_DEFAULT.h, v: FOV_DEFAULT.v };
     let cal = { hOff: 0, eOff: 0 };
+    let apiBase = "";
+    let routeCache = {};
 
     function n360(value) {
       return ((value % 360) + 360) % 360;
@@ -489,6 +494,19 @@
           localStorage.setItem("fr24_token", fr24Token);
         } catch (error) {}
       }
+
+      const requestedApiBase = params.get("api_base");
+      if (requestedApiBase) {
+        try {
+          localStorage.setItem("flight_front_api_base", requestedApiBase.replace(/\/$/, ""));
+        } catch (error) {}
+      }
+
+      try {
+        apiBase = (localStorage.getItem("flight_front_api_base") || "").replace(/\/$/, "");
+      } catch (error) {
+        apiBase = "";
+      }
     }
 
     function saveFov() {
@@ -524,12 +542,19 @@
       messageEl.textContent = message;
     }
 
+    function setPlainAnswer(text, status = "ANSWER", error = false) {
+      setStatus(status, error);
+      callsignEl.textContent = "ANSWER";
+      subtitleEl.textContent = "";
+      messageEl.textContent = text;
+    }
+
     function renderMetrics() {
       const az = aimAz();
       const el = aimEl();
       headingText.textContent = headingS == null ? "--- deg" : `${Math.round(az).toString().padStart(3, "0")} ${directionFromHeading(az)}`;
       pitchText.textContent = pitchS == null ? "-- deg" : `${Math.round(el)} deg`;
-      fovText.textContent = `${Math.round(fov.h)} x ${Math.round(fov.v)}`;
+      fovText.textContent = `${Math.round(fov.h)} deg`;
       providerText.textContent = providers[providerIndex].label;
     }
 
@@ -666,6 +691,28 @@
       return n360(Math.atan2(y, x) * R2D);
     }
 
+    function validateDetectionInputs(currentLat, currentLon, viewBearingDeg, viewHalfAngle, searchRadiusNm) {
+      if (!Number.isFinite(currentLat) || currentLat < -90 || currentLat > 90) {
+        throw new Error("Latitude must be between -90 and 90.");
+      }
+
+      if (!Number.isFinite(currentLon) || currentLon < -180 || currentLon > 180) {
+        throw new Error("Longitude must be between -180 and 180.");
+      }
+
+      if (!Number.isFinite(viewBearingDeg)) {
+        throw new Error("Bearing must be a number.");
+      }
+
+      if (!Number.isFinite(viewHalfAngle) || viewHalfAngle <= 0 || viewHalfAngle > 180) {
+        throw new Error("View half-angle must be greater than 0 and less than or equal to 180.");
+      }
+
+      if (!Number.isFinite(searchRadiusNm) || searchRadiusNm <= 0) {
+        throw new Error("Search radius must be positive.");
+      }
+    }
+
     function distanceNm(lat1, lon1, lat2, lon2) {
       const rNm = 3440.065;
       const p1 = lat1 * D2R;
@@ -687,7 +734,37 @@
       return text || fallback;
     }
 
-    function normalizeAdsbAircraft(item) {
+    function hasRealCallsign(value) {
+      const text = String(value || "").trim();
+      return !!text && text !== "UNKNOWN";
+    }
+
+    function normalizeCallsign(value) {
+      return String(value || "").trim().replace(/\s+/g, "");
+    }
+
+    function getProxyUrl(provider) {
+      const params = new URLSearchParams({
+        provider,
+        lat: String(observer.lat),
+        lon: String(observer.lon),
+        radius: String(SEARCH_RADIUS_NM)
+      });
+      return `${apiBase}/api/aircraft?${params.toString()}`;
+    }
+
+    function getRouteUrl(hex, callsign) {
+      const params = new URLSearchParams();
+      if (hex) {
+        params.set("hex", hex);
+      }
+      if (callsign) {
+        params.set("callsign", callsign);
+      }
+      return `${apiBase}/api/route?${params.toString()}`;
+    }
+
+    function normalizeAdsbAircraft(item, providerLabel = providers[providerIndex].label) {
       const lat = Number(item.lat);
       const lon = Number(item.lon);
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
@@ -695,16 +772,20 @@
       }
 
       const alt = Number(item.alt_geom ?? item.alt_baro ?? item.altitude ?? 0);
+      const dist = Number(item.dst ?? item.distance ?? item.dist);
       return {
-        provider: providers[providerIndex].label,
+        provider: providerLabel,
         id: cleanText(item.hex || item.icao || item.id, "unknown"),
-        callsign: cleanText(item.flight || item.callsign || item.r || item.hex, "UNKNOWN"),
-        type: cleanText(item.t || item.type || item.aircraft_type, "aircraft"),
+        callsign: normalizeCallsign(item.flight || item.callsign),
+        registration: cleanText(item.r || item.registration, ""),
+        type: cleanText(item.desc || item.t || item.type || item.aircraft_type, "aircraft"),
         lat,
         lon,
+        dst: Number.isFinite(dist) ? dist : null,
         altFt: Number.isFinite(alt) ? alt : 0,
         speedKt: Number(item.gs ?? item.speed ?? item.gspeed ?? 0) || 0,
-        track: Number(item.track ?? item.heading ?? item.true_track ?? 0) || 0
+        track: Number(item.track ?? item.heading ?? item.true_track ?? 0) || 0,
+        onGround: item.on_ground === true || item.on_ground === "true"
       };
     }
 
@@ -718,13 +799,16 @@
       return {
         provider: "Flightradar24",
         id: cleanText(item.fr24_id || item.id || item.hex || item.icao, "unknown"),
-        callsign: cleanText(item.callsign || item.flight || item.ident || item.registration, "UNKNOWN"),
+        callsign: normalizeCallsign(item.callsign || item.flight || item.ident),
+        registration: cleanText(item.registration, ""),
         type: cleanText(item.type || item.aircraft_type || item.aircraft, "aircraft"),
         lat,
         lon,
+        dst: null,
         altFt: Number(item.alt ?? item.altitude ?? item.alt_baro ?? 0) || 0,
         speedKt: Number(item.gspeed ?? item.ground_speed ?? item.speed ?? 0) || 0,
-        track: Number(item.track ?? item.heading ?? 0) || 0
+        track: Number(item.track ?? item.heading ?? 0) || 0,
+        onGround: item.on_ground === true || item.ground === true
       };
     }
 
@@ -734,6 +818,33 @@
         throw new Error(`HTTP ${res.status}`);
       }
       return res.json();
+    }
+
+    async function fetchViaProxy(provider) {
+      const res = await fetch(getProxyUrl(provider));
+      if (!res.ok) {
+        throw new Error(`Proxy HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      const list = data.aircraft || data.ac || data.data || [];
+      const label = providers.find((item) => item.id === provider)?.label || provider;
+      return list.map((item) => provider === "fr24" ? normalizeFr24Aircraft(item) : normalizeAdsbAircraft(item, label)).filter(Boolean);
+    }
+
+    async function fetchWithProxyFallback(provider, directFetch) {
+      try {
+        return await fetchViaProxy(provider);
+      } catch (proxyError) {
+        try {
+          return await directFetch();
+        } catch (directError) {
+          const help = location.hostname.endsWith("github.io")
+            ? "GitHub Pages is static. Add ?api_base=https://YOUR-PROXY to your URL."
+            : "Your host needs /api/aircraft proxy.";
+          throw new Error(`${directError.message}. ${help}`);
+        }
+      }
     }
 
     function bboxAround(lat, lon, radiusNm) {
@@ -748,23 +859,40 @@
     }
 
     async function fetchAdsbLol() {
-      const url = `https://api.adsb.lol/v2/lat/${observer.lat}/lon/${observer.lon}/dist/${SEARCH_RADIUS_NM}`;
-      const data = await fetchJson(url);
-      const list = data.ac || data.aircraft || [];
-      return list.map(normalizeAdsbAircraft).filter(Boolean);
+      return fetchWithProxyFallback("adsblol", async () => {
+        const url = `https://api.adsb.lol/v2/point/${observer.lat}/${observer.lon}/${SEARCH_RADIUS_NM}`;
+        const data = await fetchJson(url);
+        const list = data.ac || data.aircraft || [];
+        return list.map((item) => normalizeAdsbAircraft(item, "ADSB.lol")).filter(Boolean);
+      });
+    }
+
+    async function fetchAirplanesLive() {
+      return fetchWithProxyFallback("airplanes", async () => {
+        const url = `https://api.airplanes.live/v2/point/${observer.lat}/${observer.lon}/${SEARCH_RADIUS_NM}`;
+        const data = await fetchJson(url);
+        const list = data.ac || data.aircraft || [];
+        return list.map((item) => normalizeAdsbAircraft(item, "airplanes.live")).filter(Boolean);
+      });
     }
 
     async function fetchAdsbFi() {
-      const url = `https://opendata.adsb.fi/api/v3/lat/${observer.lat}/lon/${observer.lon}/dist/${SEARCH_RADIUS_NM}`;
-      const data = await fetchJson(url);
-      const list = data.aircraft || data.ac || [];
-      return list.map(normalizeAdsbAircraft).filter(Boolean);
+      return fetchWithProxyFallback("adsbfi", async () => {
+        const url = `https://opendata.adsb.fi/api/v3/lat/${observer.lat}/lon/${observer.lon}/dist/${SEARCH_RADIUS_NM}`;
+        const data = await fetchJson(url);
+        const list = data.aircraft || data.ac || [];
+        return list.map((item) => normalizeAdsbAircraft(item, "adsb.fi")).filter(Boolean);
+      });
     }
 
     async function fetchFr24() {
       const token = localStorage.getItem("fr24_token") || "";
+      try {
+        return await fetchViaProxy("fr24");
+      } catch (proxyError) {}
+
       if (!token) {
-        throw new Error("FR24 token needed. Open with ?fr24_token=YOUR_TOKEN for testing.");
+        throw new Error("FR24 token needed. Set FR24_TOKEN on the proxy or open with ?fr24_token=YOUR_TOKEN for testing.");
       }
 
       const box = bboxAround(observer.lat, observer.lon, SEARCH_RADIUS_NM);
@@ -781,6 +909,37 @@
       return list.map(normalizeFr24Aircraft).filter(Boolean);
     }
 
+    function orderedFeedIds() {
+      const selected = providers[providerIndex].id;
+      const rest = ["adsblol", "airplanes", "adsbfi"].filter((id) => id !== selected);
+      return [selected, ...rest];
+    }
+
+    async function fetchAircraftFeed(provider) {
+      if (provider === "adsblol") {
+        return fetchAdsbLol();
+      }
+      if (provider === "airplanes") {
+        return fetchAirplanesLive();
+      }
+      return fetchAdsbFi();
+    }
+
+    async function fetchAircraftNearGps() {
+      const errors = [];
+      for (const provider of orderedFeedIds()) {
+        try {
+          const list = await fetchAircraftFeed(provider);
+          providerIndex = providers.findIndex((item) => item.id === provider);
+          renderMetrics();
+          return list;
+        } catch (error) {
+          errors.push(`${provider}: ${error.message}`);
+        }
+      }
+      throw new Error(errors.join(" | ") || "All ADS-B feeds failed.");
+    }
+
     async function refreshAircraft() {
       if (!observer) {
         setStatus("NO GPS", true);
@@ -793,27 +952,148 @@
       renderMetrics();
 
       try {
-        const provider = providers[providerIndex].id;
-        const list = provider === "adsblol"
-          ? await fetchAdsbLol()
-          : provider === "adsbfi"
-            ? await fetchAdsbFi()
-            : await fetchFr24();
-
+        const list = await fetchAircraftNearGps();
         aircraft = list;
         aircraftFetchedAt = Date.now();
         setStatus("LIVE", false);
         return aircraft;
       } catch (error) {
-        setStatus("API ERROR", true);
-        setResult("API", providers[providerIndex].label, error.message || "Aircraft provider failed.");
+        setPlainAnswer("I could not check live flight data right now.", "API ERROR", true);
         return [];
       } finally {
         isBusy = false;
       }
     }
 
-    function scoreAircraft(item) {
+    function scoreAircraft(item, currentLat, currentLon, viewBearingDeg, viewHalfAngle, maxVisibleNm) {
+      if (item.onGround || !Number.isFinite(item.lat) || !Number.isFinite(item.lon)) {
+        return null;
+      }
+
+      const dist = item.dst == null ? distanceNm(currentLat, currentLon, item.lat, item.lon) : Number(item.dst);
+      if (!Number.isFinite(dist) || dist > maxVisibleNm) {
+        return null;
+      }
+
+      const bearing = bearingDeg(currentLat, currentLon, item.lat, item.lon);
+      const bearingError = Math.abs(angDiff(bearing, viewBearingDeg));
+      if (bearingError > viewHalfAngle) {
+        return null;
+      }
+
+      return {
+        item,
+        dist,
+        bearing,
+        bearingError,
+        sortKey: [
+          dist,
+          bearingError,
+          hasRealCallsign(item.callsign) ? 0 : 1,
+          item.altFt && item.type !== "aircraft" ? 0 : 1
+        ]
+      };
+    }
+
+    function compareCandidates(a, b) {
+      for (let i = 0; i < a.sortKey.length; i += 1) {
+        if (a.sortKey[i] !== b.sortKey[i]) {
+          return a.sortKey[i] - b.sortKey[i];
+        }
+      }
+      return 0;
+    }
+
+    async function lookupRoute(hex, callsign) {
+      const key = normalizeCallsign(callsign) || String(hex || "").trim();
+      if (!key) {
+        return null;
+      }
+
+      const cached = routeCache[key];
+      if (cached && cached.expiresAt > Date.now()) {
+        return cached.value;
+      }
+
+      try {
+        const res = await fetch(getRouteUrl(hex, callsign));
+        if (!res.ok) {
+          throw new Error(`Route HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        const route = normalizeRouteDetails(data);
+        routeCache[key] = { value: route, expiresAt: Date.now() + ROUTE_CACHE_OK_MS };
+        return route;
+      } catch (error) {
+        routeCache[key] = { value: null, expiresAt: Date.now() + ROUTE_CACHE_FAIL_MS };
+        return null;
+      }
+    }
+
+    function normalizeRouteDetails(data) {
+      const response = data.response || data;
+      const aircraftInfo = response.aircraft || response.aircraft_info || {};
+      const routeInfo = response.flightroute || response.route || response.flight || {};
+      const airline = routeInfo.airline?.name || routeInfo.airline_name || aircraftInfo.registered_owner || "";
+      const origin = routeInfo.origin?.name || routeInfo.origin?.iata_code || routeInfo.origin?.icao_code || routeInfo.from || "";
+      const destination = routeInfo.destination?.name || routeInfo.destination?.iata_code || routeInfo.destination?.icao_code || routeInfo.to || "";
+      const type = aircraftInfo.type || aircraftInfo.icao_type || aircraftInfo.iata_type || "";
+      return {
+        airline: cleanText(airline, ""),
+        origin: cleanText(origin, ""),
+        destination: cleanText(destination, ""),
+        type: cleanText(type, "")
+      };
+    }
+
+    function generateFlightAnswer(candidate, route) {
+      if (!candidate) {
+        return "I do not see any tracked aircraft in that direction right now.";
+      }
+
+      const item = candidate.item;
+      const callsign = normalizeCallsign(item.callsign);
+      const distance = Math.max(1, Math.round(candidate.dist));
+      const altitude = Math.round(item.altFt || 0);
+      const aircraftType = route?.type || item.type || "aircraft";
+      const airline = route?.airline || "";
+      const routeText = route?.origin && route?.destination
+        ? ` It is flying from ${route.origin} to ${route.destination}.`
+        : " I could not find its route.";
+
+      if (callsign) {
+        const airlinePart = airline ? `${airline} ` : "";
+        return `That looks like ${airlinePart}flight ${callsign}, ${aircraftType}, about ${distance} nautical miles away, at about ${altitude} feet.${routeText}`;
+      }
+
+      return `I found an aircraft in that direction, about ${distance} nautical miles away, at about ${altitude} feet, but it is not broadcasting a callsign.`;
+    }
+
+    async function detectVisibleFlight(
+      currentLat,
+      currentLon,
+      viewBearingDeg,
+      viewHalfAngle = FOV_DEFAULT.h,
+      searchRadiusNm = SEARCH_RADIUS_NM,
+      maxVisibleNm = MAX_VISIBLE_NM
+    ) {
+      validateDetectionInputs(currentLat, currentLon, viewBearingDeg, viewHalfAngle, searchRadiusNm);
+      const normalizedBearing = n360(viewBearingDeg);
+      const list = await fetchAircraftNearGps(currentLat, currentLon, searchRadiusNm);
+      aircraft = list;
+      aircraftFetchedAt = Date.now();
+
+      const candidates = list
+        .map((item) => scoreAircraft(item, currentLat, currentLon, normalizedBearing, viewHalfAngle, maxVisibleNm))
+        .filter(Boolean)
+        .sort(compareCandidates);
+
+      const best = candidates[0] || null;
+      const route = best ? await lookupRoute(best.item.id, best.item.callsign) : null;
+      return generateFlightAnswer(best, route);
+    }
+
+    function legacyScoreAircraft(item) {
       const dist = distanceNm(observer.lat, observer.lon, item.lat, item.lon);
       const bearing = bearingDeg(observer.lat, observer.lon, item.lat, item.lon);
       const el = elevationDeg(dist, item.altFt, observer.altM);
@@ -853,27 +1133,13 @@
         return;
       }
 
-      if (Date.now() - aircraftFetchedAt > STALE_AIRCRAFT_MS || aircraft.length === 0) {
-        await refreshAircraft();
+      try {
+        setStatus("CHECK", false);
+        const answer = await detectVisibleFlight(observer.lat, observer.lon, aimAz(), fov.h, SEARCH_RADIUS_NM, MAX_VISIBLE_NM);
+        setPlainAnswer(answer, answer.startsWith("I could not") ? "API ERROR" : "MATCH", answer.startsWith("I could not"));
+      } catch (error) {
+        setPlainAnswer(error.message.includes("live flight data") ? error.message : "I could not check live flight data right now.", "API ERROR", true);
       }
-
-      if (!aircraft.length) {
-        setResult("NONE", providers[providerIndex].label, "No aircraft returned near your GPS location.");
-        return;
-      }
-
-      const scored = aircraft.map(scoreAircraft).sort((a, b) => a.score - b.score);
-      const bestInFov = scored.find((entry) => entry.inFov);
-      const best = bestInFov || scored[0];
-      const item = best.item;
-      const rel = best.inFov ? "IN FRONT" : "NEAREST";
-      const detail = `${Math.round(best.dist)} nm, ${Math.round(item.altFt).toLocaleString()} ft, ${Math.round(best.azError)} deg off`;
-
-      setStatus(best.inFov ? "MATCH" : "NO FOV", !best.inFov);
-      setResult(cleanText(item.callsign, item.id), `${rel} - ${item.type}`, detail);
-      messageEl.textContent = best.inFov
-        ? `${item.provider}: bearing ${Math.round(best.bearing)} deg, elevation ${Math.round(best.el)} deg, speed ${Math.round(item.speedKt)} kt.`
-        : `Closest aircraft is outside calibrated FOV. Bearing ${Math.round(best.bearing)} deg, elevation ${Math.round(best.el)} deg.`;
     }
 
     function cycleProvider() {
@@ -904,11 +1170,11 @@
       const steps = {
         1: ["Level", "Look straight at the horizon, then press Enter.", "Sets pitch offset. Down skips. Left cancels."],
         2: ["Heading", "Optional: face a true north reference, then press Enter.", "If you do not know true north, press Down to skip."],
-        3: ["FOV H 1", "Center a fixed distant point in the reticle, then press Enter.", "Use a tower, star, Moon, or distant light."],
-        4: ["FOV H 2", "Turn until that same point reaches a left/right edge, then press Enter.", "Horizontal FOV will be measured from your head turn."],
+        3: ["Cone 1", "Center a fixed distant point in the reticle, then press Enter.", "Use a tower, star, Moon, or distant light."],
+        4: ["Cone 2", "Turn until that same point reaches a left/right edge, then press Enter.", "The viewing half-angle will be measured from your head turn."],
         5: ["FOV V 1", "Center the same point again, then press Enter.", "Vertical measurement starts here."],
         6: ["FOV V 2", "Tilt until the point reaches a top/bottom edge, then press Enter.", "Vertical FOV will be measured from your pitch change."],
-        7: ["Done", `FOV H ${Math.round(fov.h)} deg V ${Math.round(fov.v)} deg saved.`, "Press Enter to finish."]
+        7: ["Done", `Viewing cone ${Math.round(fov.h)} deg saved.`, "Press Enter to finish."]
       };
       const s = steps[calStep] || steps[1];
       calTitle.textContent = s[0];
@@ -938,7 +1204,7 @@
       } else if (calStep === 4) {
         const dh = Math.abs(angDiff(calWork.hStart, headingS));
         if (dh > 0.5) {
-          fov = clampFov(2 * dh, fov.v);
+          fov = clampFov(dh, fov.v);
           saveFov();
         }
         calStep = 5;

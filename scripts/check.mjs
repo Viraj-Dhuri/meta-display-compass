@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 
 const html = readFileSync("index.html", "utf8");
+const vercelApi = readFileSync("api/aircraft.js", "utf8");
+const vercelRoute = readFileSync("api/route.js", "utf8");
+const netlifyApi = readFileSync("netlify/functions/aircraft.js", "utf8");
+const netlifyRoute = readFileSync("netlify/functions/route.js", "utf8");
+const workerApi = readFileSync("cloudflare-worker/aircraft-proxy.js", "utf8");
 
 const checks = [
   ["MRBD meta tag", /name="mrbd-web-app-capable"\s+content="yes"/.test(html)],
@@ -12,13 +17,25 @@ const checks = [
   ["geolocation watcher", /navigator\.geolocation\.watchPosition/.test(html)],
   ["DeviceOrientationEvent used", /DeviceOrientationEvent/.test(html)],
   ["orientation permission requested", /requestPermission/.test(html)],
-  ["Starlink-style FOV clamps", /FOV_MIN\s*=\s*5[\s\S]*FOV_MAX\s*=\s*30/.test(html)],
+  ["view cone clamps", /FOV_MIN\s*=\s*5[\s\S]*FOV_MAX\s*=\s*60/.test(html)],
+  ["max visible distance", /MAX_VISIBLE_NM\s*=\s*6/.test(html)],
   ["adaptive smoothing", /SMOOTH_A[\s\S]*SMOOTH_FULL_DEG[\s\S]*smoothGain/.test(html)],
   ["calibration persistence", /flight_front_cal/.test(html) && /flight_front_fov/.test(html)],
   ["calibration wizard", /startCalibration/.test(html) && /captureCalibration/.test(html)],
-  ["front flight scoring", /scoreAircraft/.test(html) && /inFov/.test(html)],
-  ["ADSB.lol provider", /api\.adsb\.lol\/v2\/lat/.test(html)],
+  ["visible flight detector function", /detectVisibleFlight/.test(html) && /validateDetectionInputs/.test(html)],
+  ["bearing cone scoring", /scoreAircraft/.test(html) && /bearingError > viewHalfAngle/.test(html)],
+  ["plain text answer generation", /generateFlightAnswer/.test(html) && /setPlainAnswer/.test(html)],
+  ["route cache", /ROUTE_CACHE_OK_MS/.test(html) && /ROUTE_CACHE_FAIL_MS/.test(html)],
+  ["ADSB.lol provider", /api\.adsb\.lol\/v2\/point/.test(html)],
+  ["airplanes.live fallback", /api\.airplanes\.live\/v2\/point/.test(html)],
   ["adsb.fi provider", /opendata\.adsb\.fi\/api\/v3/.test(html)],
+  ["same-origin API proxy first", /\/api\/aircraft/.test(html) && /fetchViaProxy/.test(html)],
+  ["GitHub Pages external API base", /api_base/.test(html) && /flight_front_api_base/.test(html)],
+  ["Vercel API proxy", /api\.adsb\.lol\/v2\/point/.test(vercelApi) && /api\.airplanes\.live/.test(vercelApi) && /access-control-allow-origin/.test(vercelApi)],
+  ["Vercel route proxy", /api\.adsbdb\.com\/v0\/aircraft/.test(vercelRoute) && /api\.adsbdb\.com\/v0\/callsign/.test(vercelRoute)],
+  ["Netlify API proxy", /api\.adsb\.lol\/v2\/point/.test(netlifyApi) && /api\.airplanes\.live/.test(netlifyApi) && /export async function handler/.test(netlifyApi)],
+  ["Netlify route proxy", /api\.adsbdb\.com\/v0\/aircraft/.test(netlifyRoute) && /export async function handler/.test(netlifyRoute)],
+  ["Cloudflare Worker proxy", /export default/.test(workerApi) && /env\.FR24_TOKEN/.test(workerApi)],
   ["Flightradar24 provider", /fr24api\.flightradar24\.com/.test(html)],
   ["FR24 token path", /fr24_token/.test(html)],
   ["Enter scans", /key === "Enter"[\s\S]*scanFront/.test(html)],
