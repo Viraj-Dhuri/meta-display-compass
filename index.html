@@ -4,19 +4,20 @@
   <meta charset="utf-8">
   <meta name="mrbd-web-app-capable" content="yes">
   <meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
-  <meta name="description" content="A Meta Ray-Ban Display Web App compass using device orientation sensors.">
+  <meta name="description" content="Meta Ray-Ban Display Web App that identifies aircraft in front of the wearer.">
   <meta name="theme-color" content="#000000">
-  <title>Facing Direction</title>
+  <title>Flight In Front</title>
   <style>
     :root {
-      --canvas: #000000;
-      --surface: #101216;
-      --surface-2: #1c1e21;
+      --black: #000000;
+      --panel: #101216;
+      --panel2: #1c1e21;
       --text: #ffffff;
       --muted: #b0b3b8;
       --cyan: #42e8ff;
       --green: #7cff9b;
       --amber: #ffd36a;
+      --red: #ff6b6b;
       --line: rgba(255, 255, 255, 0.2);
     }
 
@@ -32,7 +33,7 @@
       height: 600px;
       margin: 0;
       overflow: hidden;
-      background: var(--canvas);
+      background: var(--black);
       color: var(--text);
       font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       user-select: none;
@@ -46,233 +47,588 @@
     .app {
       width: 600px;
       height: 600px;
-      padding: 24px;
+      padding: 22px;
       display: grid;
-      grid-template-rows: 72px 1fr 96px;
+      grid-template-rows: 68px 1fr 112px;
       gap: 12px;
-      background: var(--canvas);
+      background: var(--black);
     }
 
-    .topbar,
-    .panel,
+    .bar,
+    .main,
     .footer {
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: rgba(16, 18, 22, 0.88);
+      background: rgba(16, 18, 22, 0.9);
       mix-blend-mode: plus-lighter;
     }
 
-    .topbar {
+    .bar {
       display: grid;
       grid-template-columns: 1fr auto;
       align-items: center;
-      padding: 0 18px;
+      padding: 0 16px;
     }
 
     h1 {
       margin: 0;
-      font-size: 28px;
+      font-size: 27px;
       line-height: 1;
-      font-weight: 800;
+      font-weight: 900;
       letter-spacing: 0;
     }
 
-    .sensor-state {
+    .state {
       color: var(--amber);
-      font-size: 16px;
-      font-weight: 800;
+      font-size: 15px;
+      font-weight: 900;
       text-align: right;
     }
 
-    .panel {
+    .main {
+      position: relative;
       display: grid;
-      place-items: center;
-      padding: 24px;
+      grid-template-rows: 78px 1fr 74px;
+      gap: 12px;
+      padding: 18px;
       outline: none;
     }
 
-    .panel.focusable:focus-visible {
+    .main.focusable:focus-visible {
       border-color: var(--cyan);
       box-shadow:
         0 0 0 4px rgba(66, 232, 255, 0.22),
-        0 0 34px rgba(66, 232, 255, 0.26);
+        0 0 34px rgba(66, 232, 255, 0.24);
     }
 
-    .direction {
+    .aim {
       display: grid;
-      gap: 18px;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .metric {
+      min-width: 0;
+      padding: 10px;
+      display: grid;
+      gap: 7px;
+      align-content: center;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 8px;
+      background: rgba(28, 30, 33, 0.72);
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .metric strong {
+      color: var(--cyan);
+      font: 900 19px/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
+      white-space: nowrap;
+    }
+
+    .target {
+      display: grid;
+      align-content: center;
       justify-items: center;
       text-align: center;
+      gap: 12px;
+      min-width: 0;
     }
 
-    .heading {
-      color: var(--muted);
-      font-size: 18px;
-      line-height: 1;
-      font-weight: 700;
-    }
-
-    .cardinal {
-      min-height: 122px;
-      color: var(--cyan);
-      font-size: 96px;
+    .callsign {
+      min-height: 76px;
+      color: var(--green);
+      font-size: 66px;
       line-height: 1;
       font-weight: 900;
       letter-spacing: 0;
       text-shadow:
-        0 0 22px rgba(66, 232, 255, 0.65),
-        0 0 58px rgba(66, 232, 255, 0.34);
+        0 0 22px rgba(124, 255, 155, 0.64),
+        0 0 64px rgba(66, 232, 255, 0.28);
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
-    .degrees {
+    .subtitle {
+      min-height: 27px;
       color: var(--text);
-      font: 800 40px/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
+      font-size: 23px;
+      line-height: 1;
+      font-weight: 800;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .message {
-      min-height: 44px;
-      max-width: 430px;
+      min-height: 42px;
+      max-width: 456px;
       color: var(--muted);
       font-size: 18px;
-      line-height: 1.25;
+      line-height: 1.2;
+    }
+
+    .reticle {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 80px;
+      height: 80px;
+      border: 1px solid rgba(66, 232, 255, 0.32);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+
+    .reticle::before,
+    .reticle::after {
+      content: "";
+      position: absolute;
+      background: rgba(66, 232, 255, 0.4);
+    }
+
+    .reticle::before {
+      left: 50%;
+      top: -16px;
+      width: 1px;
+      height: 112px;
+    }
+
+    .reticle::after {
+      left: -16px;
+      top: 50%;
+      width: 112px;
+      height: 1px;
+    }
+
+    .scanline {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: end;
+      gap: 12px;
+    }
+
+    .provider {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .provider .label {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1;
+      font-weight: 800;
+    }
+
+    .provider .value {
+      color: var(--cyan);
+      font: 900 20px/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .keycap {
+      width: 134px;
+      height: 54px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(255, 255, 255, 0.34);
+      border-radius: 8px;
+      background: var(--panel2);
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 900;
     }
 
     .footer {
       display: grid;
-      grid-template-columns: 1fr 144px;
+      grid-template-columns: 1fr 132px;
+      gap: 12px;
       align-items: center;
-      gap: 14px;
       padding: 12px 14px;
     }
 
-    .hint {
+    .help {
       display: grid;
       gap: 8px;
       color: var(--muted);
-      font-size: 16px;
+      font-size: 15px;
       line-height: 1;
     }
 
-    .keycap {
-      width: 144px;
-      height: 72px;
-      display: grid;
-      place-items: center;
-      border: 1px solid rgba(255, 255, 255, 0.32);
-      border-radius: 8px;
-      background: var(--surface-2);
+    .help strong {
       color: var(--text);
-      font-size: 20px;
-      font-weight: 800;
+      font-weight: 900;
     }
 
-    .is-live .sensor-state {
-      color: var(--green);
+    .cal {
+      position: absolute;
+      inset: 16px;
+      z-index: 2;
+      display: none;
+      padding: 22px;
+      align-content: center;
+      justify-items: center;
+      gap: 18px;
+      border: 1px solid rgba(255, 211, 106, 0.58);
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.92);
+      text-align: center;
     }
 
-    .is-live .cardinal {
-      color: var(--green);
-      text-shadow:
-        0 0 22px rgba(124, 255, 155, 0.7),
-        0 0 64px rgba(66, 232, 255, 0.32);
+    .is-calibrating .cal {
+      display: grid;
+    }
+
+    .cal h2 {
+      margin: 0;
+      color: var(--amber);
+      font-size: 32px;
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+
+    .cal p {
+      margin: 0;
+      max-width: 430px;
+      color: var(--text);
+      font-size: 22px;
+      line-height: 1.25;
+      font-weight: 750;
+    }
+
+    .cal .small {
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.2;
+    }
+
+    .is-error .state {
+      color: var(--red);
     }
   </style>
 </head>
 <body>
-  <main class="app" id="app" aria-label="Facing Direction Compass">
-    <header class="topbar">
-      <h1>Facing Direction</h1>
-      <div class="sensor-state" id="sensorState">WAITING</div>
+  <main class="app" id="app" aria-label="Flight In Front">
+    <header class="bar">
+      <h1>Flight In Front</h1>
+      <div class="state" id="stateText">WAITING</div>
     </header>
 
     <section
-      class="panel focusable"
-      id="panel"
+      class="main focusable"
+      id="main"
       tabindex="0"
-      aria-label="Compass readout. Press Enter to start sensors."
-      role="button"
+      role="application"
+      aria-label="Flight finder. Enter scans. Arrow right calibrates. Arrow left changes provider."
     >
-      <div class="direction" aria-live="polite">
-        <div class="heading">You are facing</div>
-        <div class="cardinal" id="cardinal">--</div>
-        <div class="degrees" id="degrees">--- deg</div>
-        <div class="message" id="message">Press Enter to start compass sensors.</div>
+      <div class="aim" aria-hidden="true">
+        <div class="metric">
+          <span>Heading</span>
+          <strong id="headingText">--- deg</strong>
+        </div>
+        <div class="metric">
+          <span>Pitch</span>
+          <strong id="pitchText">-- deg</strong>
+        </div>
+        <div class="metric">
+          <span>FOV</span>
+          <strong id="fovText">10 x 10</strong>
+        </div>
+      </div>
+
+      <div class="target" aria-live="polite">
+        <div class="callsign" id="callsign">READY</div>
+        <div class="subtitle" id="subtitle">Press Enter to start sensors</div>
+        <div class="message" id="message">After GPS and motion are live, press Enter again to ask what flight is in front of you.</div>
+      </div>
+
+      <div class="scanline">
+        <div class="provider">
+          <div class="label">Provider</div>
+          <div class="value" id="providerText">ADSB.lol</div>
+        </div>
+        <div class="keycap" aria-hidden="true">ENTER</div>
+      </div>
+
+      <div class="reticle" aria-hidden="true"></div>
+      <div class="cal" id="calPanel" aria-live="polite">
+        <h2 id="calTitle">Calibrate</h2>
+        <p id="calText">Look straight at the horizon, then press Enter.</p>
+        <div class="small" id="calSmall">Enter captures. Down skips. Left cancels.</div>
       </div>
     </section>
 
     <footer class="footer">
-      <div class="hint">
-        <span>Enter starts or retries sensor access.</span>
-        <span>Use Chrome DevTools Sensors to test on desktop.</span>
+      <div class="help">
+        <span><strong>Enter</strong> start / scan / capture</span>
+        <span><strong>Right</strong> calibrate, <strong>Left</strong> provider, <strong>Up</strong> reset</span>
+        <span><strong>Down</strong> refresh aircraft</span>
       </div>
-      <div class="keycap" aria-hidden="true">ENTER</div>
+      <div class="keycap" aria-hidden="true">D-PAD</div>
     </footer>
   </main>
 
   <script>
+    const FOV_DEFAULT = { h: 10, v: 10 };
+    const FOV_MIN = 5;
+    const FOV_MAX = 30;
+    const FOV_LEGACY_MAX = 35;
+    const SMOOTH_A = 0.55;
+    const SMOOTH_FULL_DEG = 3;
+    const SEARCH_RADIUS_NM = 80;
+    const STALE_AIRCRAFT_MS = 20000;
+    const D2R = Math.PI / 180;
+    const R2D = 180 / Math.PI;
+
     const app = document.getElementById("app");
-    const panel = document.getElementById("panel");
-    const sensorState = document.getElementById("sensorState");
-    const cardinal = document.getElementById("cardinal");
-    const degrees = document.getElementById("degrees");
-    const message = document.getElementById("message");
+    const main = document.getElementById("main");
+    const stateText = document.getElementById("stateText");
+    const headingText = document.getElementById("headingText");
+    const pitchText = document.getElementById("pitchText");
+    const fovText = document.getElementById("fovText");
+    const callsignEl = document.getElementById("callsign");
+    const subtitleEl = document.getElementById("subtitle");
+    const messageEl = document.getElementById("message");
+    const providerText = document.getElementById("providerText");
+    const calTitle = document.getElementById("calTitle");
+    const calText = document.getElementById("calText");
+    const calSmall = document.getElementById("calSmall");
 
-    let listening = false;
-    let smoothedHeading = null;
+    const providers = [
+      { id: "adsblol", label: "ADSB.lol" },
+      { id: "adsbfi", label: "adsb.fi" },
+      { id: "fr24", label: "Flightradar24" }
+    ];
 
-    function normalizeDegrees(value) {
+    let providerIndex = 0;
+    let observer = null;
+    let geoWatch = null;
+    let headingS = null;
+    let pitchS = null;
+    let haveOrientation = false;
+    let orientAttached = false;
+    let orientUsingAbsolute = false;
+    let aircraft = [];
+    let aircraftFetchedAt = 0;
+    let isStarted = false;
+    let isBusy = false;
+    let calStep = 0;
+    let calWork = {};
+    let fov = { h: FOV_DEFAULT.h, v: FOV_DEFAULT.v };
+    let cal = { hOff: 0, eOff: 0 };
+
+    function n360(value) {
       return ((value % 360) + 360) % 360;
+    }
+
+    function angDiff(from, to) {
+      return ((to - from + 540) % 360) - 180;
+    }
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function clampFov(h, v) {
+      return {
+        h: clamp(Number(h) || FOV_DEFAULT.h, FOV_MIN, FOV_MAX),
+        v: clamp(Number(v) || FOV_DEFAULT.v, FOV_MIN, FOV_MAX)
+      };
+    }
+
+    function smoothGain(delta) {
+      return SMOOTH_A + (1 - SMOOTH_A) * Math.min(1, Math.abs(delta) / SMOOTH_FULL_DEG);
+    }
+
+    function aimAz() {
+      return n360((headingS == null ? 0 : headingS) + cal.hOff);
+    }
+
+    function aimEl() {
+      return clamp((pitchS == null ? 0 : pitchS) + cal.eOff, -30, 90);
     }
 
     function directionFromHeading(heading) {
       const directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
-      return directions[Math.round(heading / 45) % directions.length];
+      return directions[Math.round(n360(heading) / 45) % directions.length];
     }
 
-    function smoothHeading(next) {
-      if (smoothedHeading === null) {
-        smoothedHeading = next;
-        return next;
+    function loadSettings() {
+      try {
+        const savedFov = JSON.parse(localStorage.getItem("flight_front_fov") || "null");
+        if (savedFov && savedFov.h <= FOV_LEGACY_MAX && savedFov.v <= FOV_LEGACY_MAX) {
+          fov = clampFov(savedFov.h, savedFov.v);
+        }
+      } catch (error) {}
+
+      try {
+        const savedCal = JSON.parse(localStorage.getItem("flight_front_cal") || "null");
+        if (savedCal) {
+          cal.hOff = Number(savedCal.hOff) || 0;
+          cal.eOff = Number(savedCal.eOff) || 0;
+        }
+      } catch (error) {}
+
+      const params = new URLSearchParams(location.search);
+      const fr24Token = params.get("fr24_token");
+      if (fr24Token) {
+        try {
+          localStorage.setItem("fr24_token", fr24Token);
+        } catch (error) {}
+      }
+    }
+
+    function saveFov() {
+      try {
+        localStorage.setItem("flight_front_fov", JSON.stringify(fov));
+      } catch (error) {}
+    }
+
+    function saveCal() {
+      try {
+        localStorage.setItem("flight_front_cal", JSON.stringify(cal));
+      } catch (error) {}
+    }
+
+    function resetCalibration() {
+      fov = { h: FOV_DEFAULT.h, v: FOV_DEFAULT.v };
+      cal = { hOff: 0, eOff: 0 };
+      saveFov();
+      saveCal();
+      setStatus("RESET", false);
+      setResult("RESET", "Calibration reset", "FOV and offsets are back to defaults.");
+      renderMetrics();
+    }
+
+    function setStatus(text, error) {
+      stateText.textContent = text;
+      app.classList.toggle("is-error", !!error);
+    }
+
+    function setResult(callsign, subtitle, message) {
+      callsignEl.textContent = callsign;
+      subtitleEl.textContent = subtitle;
+      messageEl.textContent = message;
+    }
+
+    function renderMetrics() {
+      const az = aimAz();
+      const el = aimEl();
+      headingText.textContent = headingS == null ? "--- deg" : `${Math.round(az).toString().padStart(3, "0")} ${directionFromHeading(az)}`;
+      pitchText.textContent = pitchS == null ? "-- deg" : `${Math.round(el)} deg`;
+      fovText.textContent = `${Math.round(fov.h)} x ${Math.round(fov.v)}`;
+      providerText.textContent = providers[providerIndex].label;
+    }
+
+    function requestLocation() {
+      if (!("geolocation" in navigator)) {
+        setStatus("NO GPS", true);
+        setResult("NO GPS", "Location unavailable", "This browser does not expose geolocation.");
+        return;
       }
 
-      const delta = ((next - smoothedHeading + 540) % 360) - 180;
-      smoothedHeading = normalizeDegrees(smoothedHeading + delta * 0.18);
-      return smoothedHeading;
-    }
+      setStatus("GPS", false);
+      if (geoWatch != null) {
+        try {
+          navigator.geolocation.clearWatch(geoWatch);
+        } catch (error) {}
+      }
 
-    function setStatus(state, text) {
-      sensorState.textContent = state;
-      message.textContent = text;
-      app.classList.toggle("is-live", state === "LIVE");
-    }
-
-    function renderHeading(rawHeading) {
-      const heading = smoothHeading(normalizeDegrees(rawHeading));
-      cardinal.textContent = directionFromHeading(heading);
-      degrees.textContent = `${String(Math.round(heading)).padStart(3, "0")} deg`;
-      setStatus("LIVE", "Compass is reading device orientation.");
+      geoWatch = navigator.geolocation.watchPosition((pos) => {
+        observer = {
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+          altM: pos.coords.altitude || 0,
+          accuracy: pos.coords.accuracy || null
+        };
+        if (isStarted && aircraft.length === 0 && Date.now() - aircraftFetchedAt > STALE_AIRCRAFT_MS) {
+          refreshAircraft();
+        }
+        renderMetrics();
+      }, (err) => {
+        if (err.code === 1) {
+          setStatus("GPS DENIED", true);
+          setResult("GPS DENIED", "Location permission blocked", "Allow location on the glasses, then press Enter.");
+        } else if (!observer) {
+          setStatus("GPS WAIT", false);
+          setResult("WAIT", "Getting location", "Move outdoors or wait for a better location fix.");
+        }
+      }, { enableHighAccuracy: true, timeout: 30000, maximumAge: 15000 });
     }
 
     function onOrientation(event) {
-      const iosHeading = event.webkitCompassHeading;
-      const alpha = event.alpha;
-
-      if (typeof iosHeading === "number") {
-        renderHeading(iosHeading);
+      if (orientUsingAbsolute && event.type === "deviceorientation" && event.absolute === false) {
         return;
       }
 
-      if (typeof alpha === "number") {
-        renderHeading(360 - alpha);
-        return;
+      haveOrientation = true;
+      let heading = null;
+
+      if (typeof event.webkitCompassHeading === "number" && !Number.isNaN(event.webkitCompassHeading)) {
+        heading = event.webkitCompassHeading;
+      } else if (typeof event.alpha === "number" && event.alpha !== null) {
+        heading = n360(360 - event.alpha);
       }
 
-      setStatus("NO DATA", "This browser sent orientation events without heading data.");
+      if (heading !== null) {
+        if (headingS == null) {
+          headingS = heading;
+        } else {
+          const delta = angDiff(headingS, heading);
+          headingS = n360(headingS + smoothGain(delta) * delta);
+        }
+      }
+
+      if (typeof event.beta === "number") {
+        const rawPitch = clamp(event.beta - 90, -30, 90);
+        pitchS = pitchS == null ? rawPitch : pitchS + smoothGain(rawPitch - pitchS) * (rawPitch - pitchS);
+      }
+
+      if (headingS != null && pitchS != null) {
+        setStatus("LIVE", false);
+      }
+      renderMetrics();
     }
 
-    async function startCompass() {
+    function attachOrientation() {
+      if (orientAttached) {
+        return;
+      }
+
+      orientAttached = true;
+      if ("ondeviceorientationabsolute" in window) {
+        orientUsingAbsolute = true;
+        window.addEventListener("deviceorientationabsolute", onOrientation, true);
+        setTimeout(() => {
+          if (haveOrientation || !orientUsingAbsolute) {
+            return;
+          }
+          orientUsingAbsolute = false;
+          window.addEventListener("deviceorientation", onOrientation, true);
+        }, 1500);
+      } else {
+        orientUsingAbsolute = false;
+        window.addEventListener("deviceorientation", onOrientation, true);
+      }
+    }
+
+    async function enableSensors() {
       if (!("DeviceOrientationEvent" in window)) {
-        setStatus("NO SENSOR", "Device orientation is not available in this browser.");
+        setStatus("NO IMU", true);
+        setResult("NO IMU", "Motion unavailable", "This browser does not expose device orientation.");
         return;
       }
 
@@ -280,36 +636,385 @@
         if (typeof DeviceOrientationEvent.requestPermission === "function") {
           const permission = await DeviceOrientationEvent.requestPermission();
           if (permission !== "granted") {
-            setStatus("DENIED", "Sensor permission was not granted.");
+            setStatus("IMU DENIED", true);
+            setResult("DENIED", "Motion permission blocked", "Allow motion/orientation on the glasses, then press Enter.");
             return;
           }
         }
-
-        if (!listening) {
-          window.addEventListener("deviceorientation", onOrientation, true);
-          listening = true;
-        }
-
-        setStatus("STARTING", "Move or turn slightly while sensor data starts.");
+        attachOrientation();
       } catch (error) {
-        setStatus("ERROR", "Sensor access failed. Try again from HTTPS or on-device.");
+        setStatus("IMU ERROR", true);
+        setResult("ERROR", "Sensor request failed", "Use HTTPS and start from an Enter gesture on-device.");
+      }
+    }
+
+    async function startApp() {
+      isStarted = true;
+      setStatus("STARTING", false);
+      setResult("START", "Requesting GPS and motion", "Accept location and motion permissions if prompted.");
+      requestLocation();
+      await enableSensors();
+      renderMetrics();
+    }
+
+    function bearingDeg(lat1, lon1, lat2, lon2) {
+      const p1 = lat1 * D2R;
+      const p2 = lat2 * D2R;
+      const dl = (lon2 - lon1) * D2R;
+      const y = Math.sin(dl) * Math.cos(p2);
+      const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+      return n360(Math.atan2(y, x) * R2D);
+    }
+
+    function distanceNm(lat1, lon1, lat2, lon2) {
+      const rNm = 3440.065;
+      const p1 = lat1 * D2R;
+      const p2 = lat2 * D2R;
+      const dp = (lat2 - lat1) * D2R;
+      const dl = (lon2 - lon1) * D2R;
+      const a = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+      return 2 * rNm * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    function elevationDeg(distanceNmValue, aircraftAltFt, observerAltM) {
+      const distFt = Math.max(distanceNmValue * 6076.12, 1);
+      const observerFt = (observerAltM || 0) * 3.28084;
+      return Math.atan2((aircraftAltFt || 0) - observerFt, distFt) * R2D;
+    }
+
+    function cleanText(value, fallback) {
+      const text = String(value || "").trim();
+      return text || fallback;
+    }
+
+    function normalizeAdsbAircraft(item) {
+      const lat = Number(item.lat);
+      const lon = Number(item.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return null;
+      }
+
+      const alt = Number(item.alt_geom ?? item.alt_baro ?? item.altitude ?? 0);
+      return {
+        provider: providers[providerIndex].label,
+        id: cleanText(item.hex || item.icao || item.id, "unknown"),
+        callsign: cleanText(item.flight || item.callsign || item.r || item.hex, "UNKNOWN"),
+        type: cleanText(item.t || item.type || item.aircraft_type, "aircraft"),
+        lat,
+        lon,
+        altFt: Number.isFinite(alt) ? alt : 0,
+        speedKt: Number(item.gs ?? item.speed ?? item.gspeed ?? 0) || 0,
+        track: Number(item.track ?? item.heading ?? item.true_track ?? 0) || 0
+      };
+    }
+
+    function normalizeFr24Aircraft(item) {
+      const lat = Number(item.lat ?? item.latitude);
+      const lon = Number(item.lon ?? item.lng ?? item.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return null;
+      }
+
+      return {
+        provider: "Flightradar24",
+        id: cleanText(item.fr24_id || item.id || item.hex || item.icao, "unknown"),
+        callsign: cleanText(item.callsign || item.flight || item.ident || item.registration, "UNKNOWN"),
+        type: cleanText(item.type || item.aircraft_type || item.aircraft, "aircraft"),
+        lat,
+        lon,
+        altFt: Number(item.alt ?? item.altitude ?? item.alt_baro ?? 0) || 0,
+        speedKt: Number(item.gspeed ?? item.ground_speed ?? item.speed ?? 0) || 0,
+        track: Number(item.track ?? item.heading ?? 0) || 0
+      };
+    }
+
+    async function fetchJson(url, options) {
+      const res = await fetch(url, options);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      return res.json();
+    }
+
+    function bboxAround(lat, lon, radiusNm) {
+      const dLat = radiusNm / 60;
+      const dLon = radiusNm / (60 * Math.max(Math.cos(lat * D2R), 0.2));
+      return {
+        north: lat + dLat,
+        south: lat - dLat,
+        east: lon + dLon,
+        west: lon - dLon
+      };
+    }
+
+    async function fetchAdsbLol() {
+      const url = `https://api.adsb.lol/v2/lat/${observer.lat}/lon/${observer.lon}/dist/${SEARCH_RADIUS_NM}`;
+      const data = await fetchJson(url);
+      const list = data.ac || data.aircraft || [];
+      return list.map(normalizeAdsbAircraft).filter(Boolean);
+    }
+
+    async function fetchAdsbFi() {
+      const url = `https://opendata.adsb.fi/api/v3/lat/${observer.lat}/lon/${observer.lon}/dist/${SEARCH_RADIUS_NM}`;
+      const data = await fetchJson(url);
+      const list = data.aircraft || data.ac || [];
+      return list.map(normalizeAdsbAircraft).filter(Boolean);
+    }
+
+    async function fetchFr24() {
+      const token = localStorage.getItem("fr24_token") || "";
+      if (!token) {
+        throw new Error("FR24 token needed. Open with ?fr24_token=YOUR_TOKEN for testing.");
+      }
+
+      const box = bboxAround(observer.lat, observer.lon, SEARCH_RADIUS_NM);
+      const bounds = `${box.north.toFixed(3)},${box.south.toFixed(3)},${box.west.toFixed(3)},${box.east.toFixed(3)}`;
+      const url = `https://fr24api.flightradar24.com/api/live/flight-positions/light?bounds=${encodeURIComponent(bounds)}`;
+      const data = await fetchJson(url, {
+        headers: {
+          "accept": "application/json",
+          "accept-version": "v1",
+          "authorization": `Bearer ${token}`
+        }
+      });
+      const list = Array.isArray(data) ? data : (data.data || data.flights || []);
+      return list.map(normalizeFr24Aircraft).filter(Boolean);
+    }
+
+    async function refreshAircraft() {
+      if (!observer) {
+        setStatus("NO GPS", true);
+        setResult("NO GPS", "Location not ready", "Wait for GPS, then press Enter again.");
+        return [];
+      }
+
+      isBusy = true;
+      setStatus("FETCH", false);
+      renderMetrics();
+
+      try {
+        const provider = providers[providerIndex].id;
+        const list = provider === "adsblol"
+          ? await fetchAdsbLol()
+          : provider === "adsbfi"
+            ? await fetchAdsbFi()
+            : await fetchFr24();
+
+        aircraft = list;
+        aircraftFetchedAt = Date.now();
+        setStatus("LIVE", false);
+        return aircraft;
+      } catch (error) {
+        setStatus("API ERROR", true);
+        setResult("API", providers[providerIndex].label, error.message || "Aircraft provider failed.");
+        return [];
+      } finally {
+        isBusy = false;
+      }
+    }
+
+    function scoreAircraft(item) {
+      const dist = distanceNm(observer.lat, observer.lon, item.lat, item.lon);
+      const bearing = bearingDeg(observer.lat, observer.lon, item.lat, item.lon);
+      const el = elevationDeg(dist, item.altFt, observer.altM);
+      const azError = Math.abs(angDiff(aimAz(), bearing));
+      const elError = Math.abs(aimEl() - el);
+      const hHalf = Math.max(fov.h / 2, 1);
+      const vHalf = Math.max(fov.v / 2, 1);
+      const centerScore = Math.hypot(azError / hHalf, elError / vHalf);
+
+      return {
+        item,
+        dist,
+        bearing,
+        el,
+        azError,
+        elError,
+        inFov: azError <= hHalf && elError <= vHalf,
+        score: centerScore + dist / 500
+      };
+    }
+
+    async function scanFront() {
+      if (!isStarted) {
+        await startApp();
+        return;
+      }
+
+      if (!observer) {
+        setStatus("GPS WAIT", false);
+        setResult("WAIT", "Getting location", "GPS is required before aircraft can be matched.");
+        return;
+      }
+
+      if (headingS == null) {
+        setStatus("IMU WAIT", false);
+        setResult("WAIT", "Getting heading", "Turn your head slightly while the compass starts.");
+        return;
+      }
+
+      if (Date.now() - aircraftFetchedAt > STALE_AIRCRAFT_MS || aircraft.length === 0) {
+        await refreshAircraft();
+      }
+
+      if (!aircraft.length) {
+        setResult("NONE", providers[providerIndex].label, "No aircraft returned near your GPS location.");
+        return;
+      }
+
+      const scored = aircraft.map(scoreAircraft).sort((a, b) => a.score - b.score);
+      const bestInFov = scored.find((entry) => entry.inFov);
+      const best = bestInFov || scored[0];
+      const item = best.item;
+      const rel = best.inFov ? "IN FRONT" : "NEAREST";
+      const detail = `${Math.round(best.dist)} nm, ${Math.round(item.altFt).toLocaleString()} ft, ${Math.round(best.azError)} deg off`;
+
+      setStatus(best.inFov ? "MATCH" : "NO FOV", !best.inFov);
+      setResult(cleanText(item.callsign, item.id), `${rel} - ${item.type}`, detail);
+      messageEl.textContent = best.inFov
+        ? `${item.provider}: bearing ${Math.round(best.bearing)} deg, elevation ${Math.round(best.el)} deg, speed ${Math.round(item.speedKt)} kt.`
+        : `Closest aircraft is outside calibrated FOV. Bearing ${Math.round(best.bearing)} deg, elevation ${Math.round(best.el)} deg.`;
+    }
+
+    function cycleProvider() {
+      providerIndex = (providerIndex + 1) % providers.length;
+      aircraft = [];
+      aircraftFetchedAt = 0;
+      renderMetrics();
+      setStatus("PROVIDER", false);
+      setResult(providers[providerIndex].label, "Provider selected", "Press Enter to scan with this provider.");
+    }
+
+    function startCalibration() {
+      calStep = 1;
+      calWork = {};
+      app.classList.add("is-calibrating");
+      renderCalibration();
+    }
+
+    function exitCalibration() {
+      calStep = 0;
+      calWork = {};
+      app.classList.remove("is-calibrating");
+      setStatus("LIVE", false);
+      setResult("READY", "Calibration closed", "Press Enter to scan the flight in front of you.");
+    }
+
+    function renderCalibration() {
+      const steps = {
+        1: ["Level", "Look straight at the horizon, then press Enter.", "Sets pitch offset. Down skips. Left cancels."],
+        2: ["Heading", "Optional: face a true north reference, then press Enter.", "If you do not know true north, press Down to skip."],
+        3: ["FOV H 1", "Center a fixed distant point in the reticle, then press Enter.", "Use a tower, star, Moon, or distant light."],
+        4: ["FOV H 2", "Turn until that same point reaches a left/right edge, then press Enter.", "Horizontal FOV will be measured from your head turn."],
+        5: ["FOV V 1", "Center the same point again, then press Enter.", "Vertical measurement starts here."],
+        6: ["FOV V 2", "Tilt until the point reaches a top/bottom edge, then press Enter.", "Vertical FOV will be measured from your pitch change."],
+        7: ["Done", `FOV H ${Math.round(fov.h)} deg V ${Math.round(fov.v)} deg saved.`, "Press Enter to finish."]
+      };
+      const s = steps[calStep] || steps[1];
+      calTitle.textContent = s[0];
+      calText.textContent = s[1];
+      calSmall.textContent = s[2];
+      setStatus("CAL", false);
+    }
+
+    function captureCalibration() {
+      if (headingS == null || pitchS == null) {
+        setStatus("NO IMU", true);
+        calSmall.textContent = "Waiting for heading and pitch sensor data.";
+        return;
+      }
+
+      if (calStep === 1) {
+        cal.eOff = -pitchS;
+        saveCal();
+        calStep = 2;
+      } else if (calStep === 2) {
+        cal.hOff = -headingS;
+        saveCal();
+        calStep = 3;
+      } else if (calStep === 3) {
+        calWork.hStart = headingS;
+        calStep = 4;
+      } else if (calStep === 4) {
+        const dh = Math.abs(angDiff(calWork.hStart, headingS));
+        if (dh > 0.5) {
+          fov = clampFov(2 * dh, fov.v);
+          saveFov();
+        }
+        calStep = 5;
+      } else if (calStep === 5) {
+        calWork.vStart = pitchS;
+        calStep = 6;
+      } else if (calStep === 6) {
+        const dv = Math.abs(pitchS - calWork.vStart);
+        if (dv > 0.5) {
+          fov = clampFov(fov.h, 2 * dv);
+          saveFov();
+        }
+        calStep = 7;
+      } else {
+        exitCalibration();
+        renderMetrics();
+        return;
+      }
+
+      renderMetrics();
+      renderCalibration();
+    }
+
+    function skipCalibration() {
+      if (calStep >= 1 && calStep < 7) {
+        calStep += 1;
+        renderCalibration();
+      } else {
+        exitCalibration();
       }
     }
 
     function handleKey(event) {
-      if (event.key !== "Enter") {
+      const key = event.key;
+
+      if (calStep) {
+        if (key === "Enter" || key === " ") {
+          captureCalibration();
+        } else if (key === "ArrowDown" || key === "ArrowRight") {
+          skipCalibration();
+        } else if (key === "ArrowLeft" || key === "ArrowUp" || key === "Escape") {
+          exitCalibration();
+        } else {
+          return;
+        }
+        event.preventDefault();
         return;
       }
 
-      event.preventDefault();
-      startCompass();
+      if (key === "Enter" || key === " ") {
+        scanFront();
+        event.preventDefault();
+      } else if (key === "ArrowRight") {
+        startCalibration();
+        event.preventDefault();
+      } else if (key === "ArrowLeft") {
+        cycleProvider();
+        event.preventDefault();
+      } else if (key === "ArrowUp") {
+        resetCalibration();
+        event.preventDefault();
+      } else if (key === "ArrowDown") {
+        refreshAircraft().then(() => {
+          setResult("REFRESH", `${aircraft.length} aircraft`, "Press Enter to scan what is in front of you.");
+        });
+        event.preventDefault();
+      }
     }
 
     document.addEventListener("keydown", handleKey);
-    panel.addEventListener("click", startCompass);
+    main.addEventListener("click", () => scanFront());
 
     window.addEventListener("load", () => {
-      panel.focus();
+      loadSettings();
+      renderMetrics();
+      main.focus();
     });
   </script>
 </body>

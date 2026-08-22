@@ -28,5 +28,5 @@ createServer((req, res) => {
   });
   createReadStream(file).pipe(res);
 }).listen(port, () => {
-  console.log(`Facing Direction Compass running at http://localhost:${port}`);
+  console.log(`Flight In Front running at http://localhost:${port}`);
 });
